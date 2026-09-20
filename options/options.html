@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>EchoTranslate 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="options-container">
+    <h1>EchoTranslate 设置</h1>
+    
+    <div class="form-group">
+      <label for="api_url">API 端点</label>
+      <input type="text" id="api_url" placeholder="http://127.0.0.1:8080/v1/chat/completions">
+      <p class="hint">OpenAI 兼容的 API 端点（如 vLLM、Ollama、llama-server）</p>
+    </div>
+    
+    <div class="form-group">
+      <label for="model_name">模型名称</label>
+      <input type="text" id="model_name" placeholder="NeoHorse-1-4b">
+      <p class="hint">API 使用的模型名称</p>
+    </div>
+    
+    <div class="form-group">
+      <label for="max_concurrent">最大并发数</label>
+      <input type="number" id="max_concurrent" min="1" max="5" value="4">
+      <p class="hint">同时发送的翻译请求数量（1-5）</p>
+    </div>
+    
+    <div class="form-group">
+      <label for="request_timeout_ms">请求超时（毫秒）</label>
+      <input type="number" id="request_timeout_ms" min="5000" max="120000" value="30000" step="5000">
+      <p class="hint">单个翻译请求的超时时间</p>
+    </div>
+    
+    <div class="form-group">
+      <label for="prompt_template">翻译 Prompt 模板</label>
+      <textarea id="prompt_template" rows="5"></textarea>
+      <p class="hint">翻译提示词模板，末尾会附加待翻译文本</p>
+    </div>
+    
+    <div class="form-group">
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <input type="checkbox" id="auto_translate_english" checked>
+        <span>自动翻译英文网站（类似沉浸式翻译）</span>
+      </label>
+      <p class="hint">打开 Reddit、GitHub、英文技术博客等英文网站时自动检测并直接开启翻译</p>
+    </div>
+    
+    <div class="button-group">
+      <button id="btn-save" class="btn-primary">保存设置</button>
+      <button id="btn-test" class="btn-secondary">测试连接</button>
+      <button id="btn-clear-cache" class="btn-secondary">清空缓存</button>
+    </div>
+    
+    <div id="status-message" class="status-message"></div>
+    
+    <div class="cache-info">
+      <span id="cache-size">缓存中: 0 条</span>
+    </div>
+  </div>
+  
+  <script src="options.js"></script>
+</body>
+</html>
