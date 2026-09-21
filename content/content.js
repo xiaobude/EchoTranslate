@@ -396,14 +396,47 @@ async function startTranslation(incremental = false) {
   }
   updateProgress();
   
-  // Translate segments with concurrency matching np=4
+  // --- Step 1: Batch Cache Lookup (Instant 0ms display for visited pages) ---
+  const textsToLookup = newSegments.map(s => s.text);
+  let cachedMap = {};
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: 'GET_BATCH_CACHE',
+      texts: textsToLookup
+    });
+    if (res && res.cached) {
+      cachedMap = res.cached;
+    }
+  } catch (e) {}
+
+  // Apply all cached translations immediately in one pass
+  const remainingSegments = [];
+  for (const seg of newSegments) {
+    if (cachedMap[seg.text]) {
+      seg.translation = cachedMap[seg.text];
+      insertTranslation(seg, seg.translation);
+      translationState.translatedSegments++;
+    } else {
+      remainingSegments.push(seg);
+    }
+  }
+  updateProgress();
+
+  // If all segments were already cached, finish immediately without calling AI
+  if (remainingSegments.length === 0) {
+    translationState.isTranslating = false;
+    updateProgress();
+    return;
+  }
+
+  // --- Step 2: Translate remaining un-cached segments via LLM concurrency queue ---
   let index = 0;
   const concurrency = 4;
   let active = 0;
   
-  while (index < newSegments.length || active > 0) {
-    while (active < concurrency && index < newSegments.length) {
-      const segment = newSegments[index];
+  while (index < remainingSegments.length || active > 0) {
+    while (active < concurrency && index < remainingSegments.length) {
+      const segment = remainingSegments[index];
       index++;
       active++;
       

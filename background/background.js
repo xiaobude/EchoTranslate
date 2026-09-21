@@ -68,6 +68,9 @@ async function checkHealth() {
   }
 }
 
+// High-performance in-memory cache for 0ms lookups
+const memoryCache = new Map(); // hash -> { text, translation, timestamp }
+
 // Generate simple hash for caching
 function simpleHash(str) {
   let hash = 0;
@@ -79,27 +82,69 @@ function simpleHash(str) {
   return Math.abs(hash).toString(36);
 }
 
-// Check cache
+// Check single cache item
 async function getFromCache(text) {
-  try {
-    const hash = simpleHash(text);
-    const cached = await chrome.storage.local.get(`echo_cache_${hash}`);
-    return cached[`echo_cache_${hash}`] || null;
-  } catch (e) {
-    return null;
+  const hash = simpleHash(text);
+  if (memoryCache.has(hash)) {
+    return memoryCache.get(hash);
   }
+  try {
+    const key = `echo_cache_${hash}`;
+    const cached = await chrome.storage.local.get(key);
+    if (cached && cached[key]) {
+      memoryCache.set(hash, cached[key]);
+      return cached[key];
+    }
+  } catch (e) {}
+  return null;
 }
 
-// Save to cache
-async function saveToCache(text, translation) {
-  try {
+// Check batch cache items in ONE roundtrip (instant 0ms response)
+async function getBatchCache(texts) {
+  const results = {};
+  const missingKeys = [];
+  const keyToText = {};
+
+  for (const text of texts) {
     const hash = simpleHash(text);
-    await chrome.storage.local.set({
-      [`echo_cache_${hash}`]: {
-        text: text,
-        translation: translation,
-        timestamp: Date.now()
+    if (memoryCache.has(hash)) {
+      results[text] = memoryCache.get(hash).translation;
+    } else {
+      const key = `echo_cache_${hash}`;
+      missingKeys.push(key);
+      keyToText[key] = text;
+    }
+  }
+
+  if (missingKeys.length > 0) {
+    try {
+      const stored = await chrome.storage.local.get(missingKeys);
+      for (const [key, val] of Object.entries(stored)) {
+        if (val && val.translation) {
+          const hash = key.replace('echo_cache_', '');
+          memoryCache.set(hash, val);
+          const origText = keyToText[key] || val.text;
+          results[origText] = val.translation;
+        }
       }
+    } catch (e) {}
+  }
+
+  return results;
+}
+
+// Save to cache (memory + persistent storage)
+async function saveToCache(text, translation) {
+  const hash = simpleHash(text);
+  const item = {
+    text: text,
+    translation: translation,
+    timestamp: Date.now()
+  };
+  memoryCache.set(hash, item);
+  try {
+    await chrome.storage.local.set({
+      [`echo_cache_${hash}`]: item
     });
   } catch (e) {
     console.error('Failed to save cache:', e);
@@ -218,6 +263,7 @@ function cancelTranslations() {
 
 // Clear translation cache
 async function clearCache() {
+  memoryCache.clear();
   try {
     const all = await chrome.storage.local.get(null);
     const keysToDelete = Object.keys(all).filter(key => key.startsWith('echo_cache_'));
@@ -241,6 +287,9 @@ async function getCacheSize() {
   }
 }
 
+// Tab active translation state tracker: tabId -> boolean
+const tabTranslationStates = new Map();
+
 // Set toolbar icon state: 'active' (green) or 'inactive' (blue)
 function setIconState(tabId, state) {
   const isActive = (state === 'active' || state === true);
@@ -256,15 +305,15 @@ function setIconState(tabId, state) {
 
   const numericTabId = tabId != null ? Number(tabId) : null;
   if (numericTabId) {
+    tabTranslationStates.set(numericTabId, isActive);
     chrome.action.setIcon({ tabId: numericTabId, path: iconPath }, () => {
-      if (chrome.runtime.lastError) {
-        // Tab may have been closed
-      }
+      if (chrome.runtime.lastError) {}
     });
   } else {
     // Fallback to active tab
     chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
       if (tab && tab.id) {
+        tabTranslationStates.set(tab.id, isActive);
         chrome.action.setIcon({ tabId: tab.id, path: iconPath }, () => {
           if (chrome.runtime.lastError) {}
         });
@@ -272,6 +321,35 @@ function setIconState(tabId, state) {
     }).catch(() => {});
   }
 }
+
+// Sync icon state immediately when user switches tabs
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  const tabId = activeInfo.tabId;
+  let isActive = tabTranslationStates.get(tabId);
+  if (isActive === undefined) {
+    try {
+      const state = await chrome.tabs.sendMessage(tabId, { type: 'GET_STATE' });
+      isActive = !!(state && (state.isTranslating || state.translatedSegments > 0));
+      tabTranslationStates.set(tabId, isActive);
+    } catch (e) {
+      isActive = false;
+    }
+  }
+  setIconState(tabId, isActive);
+});
+
+// Clean up state when tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabTranslationStates.delete(tabId);
+});
+
+// Reset state when tab navigates to a new page
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading') {
+    tabTranslationStates.delete(tabId);
+    setIconState(tabId, false);
+  }
+});
 
 // Message handling from content script and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -289,6 +367,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       enqueueTranslation(message.text, (translation, error) => {
         sendResponse({ translation, error });
       });
+      return true;
+    case 'GET_BATCH_CACHE':
+      getBatchCache(message.texts || []).then(cached => sendResponse({ cached })).catch(() => sendResponse({ cached: {} }));
       return true;
     case 'CANCEL_TRANSLATIONS':
       sendResponse({ cancelled: cancelTranslations() });
