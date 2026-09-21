@@ -245,24 +245,32 @@ async function getCacheSize() {
 function setIconState(tabId, state) {
   const isActive = (state === 'active' || state === true);
   const iconPath = isActive ? {
-    "16": "icons/icon16_active.png",
-    "48": "icons/icon48_active.png",
-    "128": "icons/icon128_active.png"
+    16: '/icons/icon16_active.png',
+    48: '/icons/icon48_active.png',
+    128: '/icons/icon128_active.png'
   } : {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    16: '/icons/icon16.png',
+    48: '/icons/icon48.png',
+    128: '/icons/icon128.png'
   };
 
-  const details = { path: iconPath };
-  if (tabId != null) {
-    details.tabId = tabId;
+  const numericTabId = tabId != null ? Number(tabId) : null;
+  if (numericTabId) {
+    chrome.action.setIcon({ tabId: numericTabId, path: iconPath }, () => {
+      if (chrome.runtime.lastError) {
+        // Tab may have been closed
+      }
+    });
+  } else {
+    // Fallback to active tab
+    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+      if (tab && tab.id) {
+        chrome.action.setIcon({ tabId: tab.id, path: iconPath }, () => {
+          if (chrome.runtime.lastError) {}
+        });
+      }
+    }).catch(() => {});
   }
-  chrome.action.setIcon(details, () => {
-    if (chrome.runtime.lastError) {
-      // Tab may have closed or navigated
-    }
-  });
 }
 
 // Message handling from content script and popup
@@ -291,20 +299,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'GET_CACHE_SIZE':
       getCacheSize().then(size => sendResponse({ size })).catch(() => sendResponse({ size: 0 }));
       return true;
-    case 'UPDATE_BADGE':
-      if (sender && sender.tab && sender.tab.id) {
-        chrome.action.setBadgeText({ text: message.text || '', tabId: sender.tab.id });
+    case 'UPDATE_BADGE': {
+      const targetTabId = (message.tabId != null) ? Number(message.tabId) : (sender && sender.tab ? sender.tab.id : null);
+      if (targetTabId) {
+        chrome.action.setBadgeText({ text: message.text || '', tabId: targetTabId });
         if (message.color) {
-          chrome.action.setBadgeBackgroundColor({ color: message.color, tabId: sender.tab.id });
+          chrome.action.setBadgeBackgroundColor({ color: message.color, tabId: targetTabId });
         }
         if (message.iconState) {
-          setIconState(sender.tab.id, message.iconState);
+          setIconState(targetTabId, message.iconState);
         }
       }
       sendResponse({ success: true });
       return false;
+    }
     case 'SET_ICON_STATE': {
-      const targetTabId = (message.tabId != null) ? message.tabId : (sender && sender.tab ? sender.tab.id : null);
+      const targetTabId = (message.tabId != null) ? Number(message.tabId) : (sender && sender.tab ? sender.tab.id : null);
       setIconState(targetTabId, message.state);
       sendResponse({ success: true });
       return false;

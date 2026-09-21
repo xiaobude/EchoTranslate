@@ -29,10 +29,22 @@ function isEnglish(text) {
   return ratio > 0.2;
 }
 
+// File extension regex for skipping filenames in repository viewers/lists
+const FILE_EXT_REGEX = /\.(gguf|bin|safetensors|pt|pth|onnx|h5|ckpt|tflite|md|txt|py|js|ts|jsx|tsx|json|yaml|yml|toml|xml|html|css|scss|c|cpp|h|hpp|rs|go|java|kt|rb|php|sh|bat|ps1|csv|tsv|zip|tar|gz|7z|rar|whl|exe|dll|so|dylib|gitattributes|gitignore|dockerignore|env|lock)$/i;
+
+function isFileName(text) {
+  if (!text) return false;
+  const clean = text.trim();
+  if (clean.startsWith('.') && clean.length < 35 && !clean.includes(' ')) return true;
+  if (FILE_EXT_REGEX.test(clean) && !clean.includes('\n') && clean.split(/\s+/).length <= 2) return true;
+  return false;
+}
+
 // Tags to strictly skip
 const skipTags = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'SVG', 'PRE', 'CODE',
-  'CANVAS', 'VIDEO', 'AUDIO', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT'
+  'CANVAS', 'VIDEO', 'AUDIO', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT',
+  'KBD', 'SAMP'
 ]);
 
 // Semantic content tags
@@ -42,7 +54,27 @@ const targetTags = new Set([
 
 // Determine if an element represents translatable text
 function isTargetElement(node) {
-  if (targetTags.has(node.tagName)) return true;
+  if (targetTags.has(node.tagName)) {
+    // If LI is a complex layout container (contains div, table, form, grid, flex row), do NOT treat the whole LI as a text segment!
+    if (node.tagName === 'LI') {
+      if (node.querySelector && node.querySelector('div, table, form, ul, ol, section, p, h1, h2, h3, h4, h5, h6')) {
+        return false;
+      }
+      if (node.className && typeof node.className === 'string' && (node.className.includes('grid') || node.className.includes('row') || node.className.includes('flex'))) {
+        return false;
+      }
+      if (node.querySelectorAll && node.querySelectorAll('a, button, input').length > 1) {
+        return false;
+      }
+    }
+    // If TD/TH is a complex layout container, do not treat whole cell as a single text block
+    if (node.tagName === 'TD' || node.tagName === 'TH') {
+      if (node.querySelector && node.querySelector('div, table, form, p, ul, ol')) {
+        return false;
+      }
+    }
+    return true;
+  }
   // Support Reddit custom slots and common blog/forum titles
   if (node.hasAttribute && node.hasAttribute('slot')) {
     const slot = node.getAttribute('slot');
@@ -90,6 +122,20 @@ function collectFromNode(root, segments, segmentIdRef) {
         )) {
           return NodeFilter.FILTER_REJECT;
         }
+        // Reject file trees and code repository directory browsers (HuggingFace, GitHub, etc.)
+        if (node.closest && node.closest([
+          'ul[class*="grid"]',
+          'li[class*="grid"]',
+          '[aria-label="Files"]',
+          '[aria-label="Directory content"]',
+          '.js-navigation-container',
+          'table.files',
+          '.file-wrap',
+          '.react-directory-row',
+          '[data-target="file-tree"]'
+        ].join(','))) {
+          return NodeFilter.FILTER_REJECT;
+        }
         if (isTargetElement(node)) {
           return NodeFilter.FILTER_ACCEPT;
         }
@@ -109,6 +155,11 @@ function collectFromNode(root, segments, segmentIdRef) {
       continue;
     }
 
+    // Skip file download links and resolvers
+    if (node.closest && node.closest('a[download], a[href*="/resolve/"], a[href*="/raw/"]')) {
+      continue;
+    }
+
     // If this node contains other target tags, let the child elements be translated instead
     if (node.querySelector && node.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote, [slot="title"], [slot="text-body"], [slot="comment"]')) {
       continue;
@@ -116,6 +167,7 @@ function collectFromNode(root, segments, segmentIdRef) {
 
     const text = (node.innerText || node.textContent || '').trim();
     if (text.length < 3) continue;
+    if (isFileName(text)) continue;
     if (isChinese(text) || !isEnglish(text)) continue;
 
     segments.push({
@@ -170,8 +222,8 @@ function updateProgress() {
     } else if (totalSegments > 0 && translatedSegments > 0) {
       chrome.runtime.sendMessage({
         type: 'UPDATE_BADGE',
-        text: '中',
-        color: '#34a853',
+        text: '',
+        color: '#22c55e',
         iconState: 'active'
       });
       chrome.runtime.sendMessage({

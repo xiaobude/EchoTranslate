@@ -11,6 +11,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   const chkAutoTranslate = document.getElementById('chk-auto-translate');
   const brandIcon = document.getElementById('brand-icon');
 
+  function setTabActionIcon(tabId, isActive) {
+    if (!tabId) return;
+    const iconPath = isActive ? {
+      16: '/icons/icon16_active.png',
+      48: '/icons/icon48_active.png',
+      128: '/icons/icon128_active.png'
+    } : {
+      16: '/icons/icon16.png',
+      48: '/icons/icon48.png',
+      128: '/icons/icon128.png'
+    };
+    try {
+      chrome.action.setIcon({ tabId: Number(tabId), path: iconPath }, () => {
+        if (chrome.runtime.lastError) {}
+      });
+    } catch (e) {}
+  }
+
   function updateBrandIcon(isActive) {
     if (!brandIcon) return;
     brandIcon.src = isActive ? '../icons/icon48_active.png' : '../icons/icon48.png';
@@ -71,6 +89,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     if (state.isTranslating) {
       updateBrandIcon(true);
+      setTabActionIcon(currentTabId, true);
       btnTargetLang.classList.add('active');
       btnOrigLang.classList.remove('active');
       const pct = state.totalSegments > 0 ? Math.round((state.translatedSegments / state.totalSegments) * 100) : 0;
@@ -78,12 +97,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       statusText.textContent = `正在翻译... ${state.translatedSegments}/${state.totalSegments} 段 (${pct}%)`;
     } else if (state.translatedSegments > 0) {
       updateBrandIcon(true);
+      setTabActionIcon(currentTabId, true);
       btnTargetLang.classList.add('active');
       btnOrigLang.classList.remove('active');
       progressFill.style.width = '100%';
       statusText.textContent = `已翻译为中文 (${state.translatedSegments} 段)`;
     } else {
       updateBrandIcon(false);
+      setTabActionIcon(currentTabId, false);
       btnOrigLang.classList.add('active');
       btnTargetLang.classList.remove('active');
       progressFill.style.width = '0%';
@@ -96,6 +117,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnTargetLang.classList.add('active');
     btnOrigLang.classList.remove('active');
     updateBrandIcon(true);
+    setTabActionIcon(currentTabId, true);
     if (currentTabId) {
       chrome.runtime.sendMessage({ type: 'SET_ICON_STATE', tabId: currentTabId, state: 'active' });
     }
@@ -111,6 +133,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnOrigLang.classList.add('active');
     btnTargetLang.classList.remove('active');
     updateBrandIcon(false);
+    setTabActionIcon(currentTabId, false);
     if (currentTabId) {
       chrome.runtime.sendMessage({ type: 'SET_ICON_STATE', tabId: currentTabId, state: 'inactive' });
     }
@@ -154,16 +177,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (message.type === 'PROGRESS_UPDATE') {
       if (message.isTranslating) {
         updateBrandIcon(true);
+        setTabActionIcon(currentTabId, true);
         btnTargetLang.classList.add('active');
         btnOrigLang.classList.remove('active');
         progressFill.style.width = message.percent + '%';
         statusText.textContent = `正在翻译... ${message.translated}/${message.total} 段 (${message.percent}%)`;
       } else if (message.total > 0 && message.translated > 0) {
         updateBrandIcon(true);
+        setTabActionIcon(currentTabId, true);
         progressFill.style.width = '100%';
         statusText.textContent = `已翻译为中文 (${message.translated} 段)`;
       } else if (message.total === 0) {
         updateBrandIcon(false);
+        setTabActionIcon(currentTabId, false);
       }
     }
   });
