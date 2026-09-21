@@ -9,7 +9,7 @@ let translationCancelled = false;
 // Default config
 const DEFAULT_CONFIG = {
   api_url: "http://localhost:8080/v1/chat/completions",
-  model_name: "Spark-X2.5-4b",
+  model_name: "spark-x2.5-4b",
   max_concurrent: 4,
   request_timeout_ms: 30000,
   auto_translate_english: true,
@@ -22,12 +22,17 @@ async function loadConfig() {
     const stored = await chrome.storage.local.get('echo_config');
     if (stored.echo_config) {
       config = stored.echo_config;
+      // Auto-correct model casing if old config had Spark-X2.5-4b
+      if (config.model_name === 'Spark-X2.5-4b') {
+        config.model_name = 'spark-x2.5-4b';
+        chrome.storage.local.set({ echo_config: config });
+      }
     } else {
-      config = DEFAULT_CONFIG;
+      config = { ...DEFAULT_CONFIG };
     }
   } catch (e) {
     console.error('Failed to load config:', e);
-    config = DEFAULT_CONFIG;
+    config = { ...DEFAULT_CONFIG };
   }
 }
 
@@ -64,6 +69,12 @@ async function checkHealth() {
     if (!response.ok) return { online: false };
     const data = await response.json();
     const activeModel = data.data && data.data[0] ? data.data[0].id : (data.models && data.models[0] ? data.models[0].name : cfg.model_name);
+    
+    // If active model differs, update local state
+    if (activeModel && config && config.model_name !== activeModel) {
+      config.model_name = activeModel;
+      saveConfig({ model_name: activeModel });
+    }
     return { online: true, model: activeModel };
   } catch (e) {
     return { online: false };
@@ -108,25 +119,99 @@ function simpleHash(str) {
   return Math.abs(hash).toString(36);
 }
 
-// Check single cache item
+// Sanitizer function to strip thinking tags, reasoning traces, and leaked prompt templates
+function cleanTranslationResult(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  let str = raw.trim();
+
+  // 1. Tag-based removal (<think>...</think>, <thought>...</thought>, <reasoning>...</reasoning>, [thought]...[/thought])
+  str = str.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  str = str.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+  str = str.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '').trim();
+  str = str.replace(/\[thought\][\s\S]*?\[\/thought\]/gi, '').trim();
+  str = str.replace(/\[reasoning\][\s\S]*?\[\/reasoning\]/gi, '').trim();
+
+  // 2. Unbalanced closing tags (drop everything up to closing tag)
+  const closeTags = ['</think>', '</thought>', '</reasoning>', '[/thought]', '[/THOUGHT]', '[/reasoning]', '[/REASONING]'];
+  for (const tag of closeTags) {
+    if (str.includes(tag)) {
+      const parts = str.split(tag);
+      str = parts[parts.length - 1].trim();
+    }
+  }
+
+  // 3. Dangling opening tags
+  str = str.replace(/^<think>[\s\S]*/i, '').trim();
+  str = str.replace(/^<thought>[\s\S]*/i, '').trim();
+
+  // 4. Repeated prompt headers
+  if (str.includes('待翻译文本：')) {
+    const parts = str.split('待翻译文本：');
+    str = parts[parts.length - 1].trim();
+  }
+
+  // 5. Reasoning/CoT without tags (e.g. models outputting chain-of-thought in content)
+  const isReasoningPolluted = /(?:需要翻译成中文|保持原样|可能术语|变量名|专业术语|确保没有解释|只输出翻译结果|思考过程)/i.test(str);
+  if (isReasoningPolluted) {
+    const outputMatch = str.match(/(?:可能输出|最终翻译|翻译结果|译文|最终输出|输出)[：:]\s*([^\n\r]+)/i);
+    if (outputMatch && outputMatch[1]) {
+      let candidate = outputMatch[1].trim();
+      candidate = candidate.replace(/\s*需要(准确|保持|流畅|只输出|注意)[\s\S]*$/i, '').trim();
+      if (candidate) {
+        str = candidate;
+      }
+    } else {
+      const lines = str.split(/[\n\r]+/);
+      const cleanLines = lines.filter(l => !/(?:需要翻译|保持原样|术语|变量名|确保没有|只输出|思考)/i.test(l));
+      if (cleanLines.length > 0) {
+        str = cleanLines[cleanLines.length - 1].trim();
+      }
+    }
+  }
+
+  // 6. Clean leading/trailing quotes if wrapped
+  if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith('“') && str.endsWith('”')) || (str.startsWith("'") && str.endsWith("'"))) {
+    str = str.slice(1, -1).trim();
+  }
+
+  return str;
+}
+
+// Get from cache (memory first, then storage)
 async function getFromCache(text) {
   const hash = simpleHash(text);
-  const memItem = getMemoryCache(hash);
-  if (memItem) {
-    return memItem;
+  
+  // 1. Memory check (0ms)
+  let mem = getMemoryCache(hash);
+  if (mem) {
+    const cleaned = cleanTranslationResult(mem.translation);
+    if (cleaned !== mem.translation) {
+      mem.translation = cleaned;
+      saveToCache(text, cleaned);
+    }
+    return mem;
   }
+
+  // 2. Storage check
   try {
     const key = `echo_cache_${hash}`;
-    const cached = await chrome.storage.local.get(key);
-    if (cached && cached[key]) {
-      putMemoryCache(hash, cached[key]);
-      return cached[key];
+    const stored = await chrome.storage.local.get(key);
+    if (stored[key]) {
+      const item = stored[key];
+      const cleaned = cleanTranslationResult(item.translation);
+      if (cleaned !== item.translation) {
+        item.translation = cleaned;
+        saveToCache(text, cleaned);
+      }
+      putMemoryCache(hash, item);
+      return item;
     }
   } catch (e) {}
+
   return null;
 }
 
-// Check batch cache items in ONE roundtrip (instant 0ms response)
+// Batch get from cache for instantaneous page translation
 async function getBatchCache(texts) {
   const results = {};
   const missingKeys = [];
@@ -134,9 +219,14 @@ async function getBatchCache(texts) {
 
   for (const text of texts) {
     const hash = simpleHash(text);
-    const memItem = getMemoryCache(hash);
-    if (memItem) {
-      results[text] = memItem.translation;
+    const mem = getMemoryCache(hash);
+    if (mem) {
+      const cleaned = cleanTranslationResult(mem.translation);
+      if (cleaned !== mem.translation) {
+        mem.translation = cleaned;
+        saveToCache(text, cleaned);
+      }
+      results[text] = mem.translation;
     } else {
       const key = `echo_cache_${hash}`;
       missingKeys.push(key);
@@ -150,6 +240,11 @@ async function getBatchCache(texts) {
       for (const [key, val] of Object.entries(stored)) {
         if (val && val.translation) {
           const hash = key.replace('echo_cache_', '');
+          const cleaned = cleanTranslationResult(val.translation);
+          if (cleaned !== val.translation) {
+            val.translation = cleaned;
+            saveToCache(val.text, cleaned);
+          }
           putMemoryCache(hash, val);
           const origText = keyToText[key] || val.text;
           results[origText] = val.translation;
@@ -163,10 +258,11 @@ async function getBatchCache(texts) {
 
 // Save to cache (memory + persistent storage)
 async function saveToCache(text, translation) {
+  const cleanText = cleanTranslationResult(translation);
   const hash = simpleHash(text);
   const item = {
     text: text,
-    translation: translation,
+    translation: cleanText,
     timestamp: Date.now()
   };
   putMemoryCache(hash, item);
@@ -199,13 +295,16 @@ async function translateSegment(text) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: cfg.model_name,
+        model: cfg.model_name || "spark-x2.5-4b",
         messages: [
-          { role: 'user', content: cfg.prompt_template + text },
-          { role: 'assistant', content: '</think>' }
+          { role: 'system', content: '你是专业翻译引擎。直接输出目标语言的翻译结果，严禁输出任何思考过程、分析、解释或前缀。' },
+          { role: 'user', content: cfg.prompt_template + text }
         ],
         temperature: 0.1,
-        max_tokens: 2000
+        max_tokens: 2000,
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
       }),
       signal: controller.signal
     });
@@ -222,12 +321,14 @@ async function translateSegment(text) {
       throw new Error('Invalid API response format');
     }
 
+    // Robust extraction: prefer msg.content; ignore msg.reasoning_content
     let translation = (msg.content || '').trim();
     if (!translation && msg.reasoning_content) {
       translation = msg.reasoning_content.trim();
     }
-    // Clean up any remaining </think> tag
-    translation = translation.replace(/^<\/think>\s*/i, '').trim();
+    
+    // Clean thinking traces and reasoning artifacts
+    translation = cleanTranslationResult(translation);
     
     // Save to cache
     await saveToCache(text, translation);

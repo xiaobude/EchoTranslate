@@ -12,6 +12,9 @@ let translationState = {
   mode: 'translated' // Default to 'translated' (仅译文)
 };
 
+// Pending flag to ensure dynamically loaded elements (e.g. comments streaming in) are never dropped
+let pendingDynamicTranslate = false;
+
 // Detect if text is mostly Chinese (>25% Chinese characters)
 function isChinese(text) {
   if (!text || text.length === 0) return false;
@@ -163,12 +166,12 @@ function collectFromNode(root, segments, segmentIdRef) {
     }
 
     // If this node contains other target tags, let the child elements be translated instead
-    if (node.querySelector && node.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote, [slot="title"], [slot="text-body"], [slot="comment"]')) {
+    if (node.querySelector && node.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote')) {
       continue;
     }
 
     const text = (node.innerText || node.textContent || '').trim();
-    if (text.length < 3) continue;
+    if (text.length < 2) continue;
     if (isFileName(text)) continue;
     if (!isTranslatable(text)) continue;
 
@@ -194,7 +197,7 @@ function collectFromNode(root, segments, segmentIdRef) {
 // Extract translatable text nodes across document
 function extractSegments() {
   const segments = [];
-  const segmentIdRef = { current: 0 };
+  const segmentIdRef = { current: (translationState.segments ? translationState.segments.length : 0) };
   const roots = getContentRoots();
 
   for (const root of roots) {
@@ -293,9 +296,11 @@ function restoreOriginal() {
     delete item.dataset.echoTranslated;
   });
   
+  pendingDynamicTranslate = false;
   translationState.autoTranslate = false;
   translationState.pendingRecheck = false;
   translationState.isTranslating = false;
+  translationState.segments = [];
   translationState.totalSegments = 0;
   translationState.translatedSegments = 0;
   translationState.failedSegments = 0;
@@ -365,10 +370,22 @@ async function translateSegment(segment) {
   }
 }
 
+// Trigger deferred translations if new DOM mutations occurred during translation
+function checkPendingDynamic() {
+  if (pendingDynamicTranslate && translationState.autoTranslate) {
+    pendingDynamicTranslate = false;
+    setTimeout(() => {
+      if (translationState.autoTranslate && !translationState.isTranslating) {
+        startTranslation(true);
+      }
+    }, 200);
+  }
+}
+
 // Start translation (supports incremental for dynamic SPA navigation)
 async function startTranslation(incremental = false) {
   if (translationState.isTranslating) {
-    translationState.pendingRecheck = true;
+    pendingDynamicTranslate = true;
     return;
   }
   
@@ -384,6 +401,7 @@ async function startTranslation(incremental = false) {
   if (newSegments.length === 0) {
     translationState.isTranslating = false;
     updateProgress();
+    checkPendingDynamic();
     return;
   }
 
@@ -428,6 +446,7 @@ async function startTranslation(incremental = false) {
   if (remainingSegments.length === 0) {
     translationState.isTranslating = false;
     updateProgress();
+    checkPendingDynamic();
     return;
   }
 
@@ -460,15 +479,7 @@ async function startTranslation(incremental = false) {
   
   translationState.isTranslating = false;
   updateProgress();
-
-  if (translationState.pendingRecheck) {
-    translationState.pendingRecheck = false;
-    setTimeout(() => {
-      if (translationState.autoTranslate) {
-        startTranslation(true);
-      }
-    }, 500);
-  }
+  checkPendingDynamic();
 }
 
 // Message handling
@@ -524,18 +535,29 @@ function onUrlChange() {
   if (location.href !== lastUrl) {
     lastUrl = location.href;
     if (translationState.autoTranslate) {
-      // Small delay to let Reddit mount the post details DOM
-      setTimeout(() => {
-        if (translationState.autoTranslate) {
-          startTranslation(true);
-        }
-      }, 600);
-      // Secondary check for slower loading comments
-      setTimeout(() => {
-        if (translationState.autoTranslate) {
-          startTranslation(true);
-        }
-      }, 1800);
+      // 1. Cancel previous pending background requests from previous page
+      try {
+        chrome.runtime.sendMessage({ type: 'CANCEL_TRANSLATIONS' });
+      } catch (e) {}
+
+      // 2. Reset view state so the count accurately reflects the new page instead of keeping stale feed counts
+      translationState.segments = [];
+      translationState.totalSegments = 0;
+      translationState.translatedSegments = 0;
+      translationState.failedSegments = 0;
+      translationState.isTranslating = false;
+      pendingDynamicTranslate = false;
+      updateProgress();
+
+      // 3. Progressive detection as Reddit mounts the post & comment elements
+      const delaySchedule = [300, 800, 1600, 2600];
+      for (const delay of delaySchedule) {
+        setTimeout(() => {
+          if (translationState.autoTranslate) {
+            startTranslation(true);
+          }
+        }, delay);
+      }
     }
   }
 }
@@ -559,7 +581,7 @@ setInterval(onUrlChange, 800);
 // Dynamic Content / Infinite Scroll Observer (Debounced)
 let mutationTimer = null;
 const dynamicObserver = new MutationObserver((mutations) => {
-  if (!translationState.autoTranslate || translationState.isTranslating) return;
+  if (!translationState.autoTranslate) return;
 
   let hasRelevantNodes = false;
   for (const m of mutations) {
@@ -575,19 +597,38 @@ const dynamicObserver = new MutationObserver((mutations) => {
   }
 
   if (hasRelevantNodes) {
-    clearTimeout(mutationTimer);
-    mutationTimer = setTimeout(() => {
-      if (translationState.autoTranslate && !translationState.isTranslating) {
-        startTranslation(true);
-      }
-    }, 1200);
+    if (translationState.isTranslating) {
+      // Mark pending so newly arrived comment nodes will be translated as soon as current batch finishes
+      pendingDynamicTranslate = true;
+    } else {
+      clearTimeout(mutationTimer);
+      mutationTimer = setTimeout(() => {
+        if (translationState.autoTranslate && !translationState.isTranslating) {
+          startTranslation(true);
+        }
+      }, 700);
+    }
   }
 });
 
 dynamicObserver.observe(document.body, { childList: true, subtree: true });
 
-// Automatically detect if the current page is in English
-function isPageEnglish() {
+// Listen for user scroll (infinite scroll for Reddit/Twitter comments)
+let scrollTimer = null;
+window.addEventListener('scroll', () => {
+  if (!translationState.autoTranslate) return;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => {
+    if (translationState.autoTranslate && !translationState.isTranslating) {
+      startTranslation(true);
+    } else if (translationState.isTranslating) {
+      pendingDynamicTranslate = true;
+    }
+  }, 800);
+}, { passive: true });
+
+// Automatically detect if the current page is foreign (English, Japanese, etc.)
+function isPageForeign() {
   const htmlLang = (document.documentElement.lang || '').toLowerCase();
   if (htmlLang.startsWith('zh')) return false;
 
@@ -650,3 +691,4 @@ function isPageEnglish() {
     }
   } catch (e) {}
 })();
+
