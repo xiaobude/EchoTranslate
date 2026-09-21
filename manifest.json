@@ -28,7 +28,12 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "EchoTranslate"
+    "default_title": "EchoTranslate",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "options_page": "options/options.html",
   "browser_specific_settings": {

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90D9"></stop>
+      <stop offset="100%" style="stop-color:#2E5C9E"></stop>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFFFFF"></stop>
+      <stop offset="100%" style="stop-color:#B8D4F0"></stop>
+    </linearGradient>
+  </defs>
+  
+  
+  <rect x="4" y="4" width="120" height="120" rx="24" ry="24" fill="url(#bg)"></rect>
+  
+  
+  <circle cx="52" cy="58" r="28" fill="none" stroke="white" stroke-width="4"></circle>
+  
+  
+  <ellipse cx="52" cy="58" rx="12" ry="28" fill="none" stroke="white" stroke-width="2.5" opacity="0.7"></ellipse>
+  <line x1="24" y1="58" x2="80" y2="58" stroke="white" stroke-width="2.5" opacity="0.7"></line>
+  
+  
+  <path d="M88 48 Q96 58 88 68" fill="none" stroke="url(#wave)" stroke-width="4" stroke-linecap="round"></path>
+  <path d="M96 40 Q108 58 96 76" fill="none" stroke="url(#wave)" stroke-width="4" stroke-linecap="round" opacity="0.8"></path>
+  <path d="M104 32 Q120 58 104 84" fill="none" stroke="url(#wave)" stroke-width="4" stroke-linecap="round" opacity="0.5"></path>
+  
+  
+  <path d="M48 88 L56 96 L64 88" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>
+</svg>
