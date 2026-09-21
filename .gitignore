@@ -9,3 +9,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Local notes
+*.txt
+

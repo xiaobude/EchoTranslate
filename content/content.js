@@ -160,13 +160,23 @@ function updateProgress() {
       chrome.runtime.sendMessage({
         type: 'UPDATE_BADGE',
         text: `${percent}%`,
-        color: '#4285f4'
+        color: '#4285f4',
+        iconState: 'active'
       });
-    } else if (totalSegments > 0) {
+      chrome.runtime.sendMessage({
+        type: 'SET_ICON_STATE',
+        state: 'active'
+      });
+    } else if (totalSegments > 0 && translatedSegments > 0) {
       chrome.runtime.sendMessage({
         type: 'UPDATE_BADGE',
         text: '中',
-        color: '#34a853'
+        color: '#34a853',
+        iconState: 'active'
+      });
+      chrome.runtime.sendMessage({
+        type: 'SET_ICON_STATE',
+        state: 'active'
       });
     }
 
@@ -236,7 +246,8 @@ function restoreOriginal() {
   translationState.translatedSegments = 0;
   translationState.failedSegments = 0;
   try {
-    chrome.runtime.sendMessage({ type: 'UPDATE_BADGE', text: '' });
+    chrome.runtime.sendMessage({ type: 'UPDATE_BADGE', text: '', iconState: 'inactive' });
+    chrome.runtime.sendMessage({ type: 'SET_ICON_STATE', state: 'inactive' });
   } catch (e) {}
 }
 
@@ -309,6 +320,9 @@ async function startTranslation(incremental = false) {
   
   translationState.autoTranslate = true;
   translationState.isTranslating = true;
+  try {
+    chrome.runtime.sendMessage({ type: 'SET_ICON_STATE', state: 'active' });
+  } catch (e) {}
 
   // Extract segments (already-translated items are automatically skipped)
   const newSegments = extractSegments();
