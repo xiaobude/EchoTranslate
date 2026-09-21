@@ -68,8 +68,32 @@ async function checkHealth() {
   }
 }
 
-// High-performance in-memory cache for 0ms lookups
+// High-performance bounded LRU in-memory cache for 0ms lookups
+// Keeps recent / active pages (Reddit lists, current article) hot in RAM
+// Automatically evicts oldest entries to prevent memory expansion; older items persist on disk
+const MAX_MEMORY_CACHE_ITEMS = 1500;
 const memoryCache = new Map(); // hash -> { text, translation, timestamp }
+
+// Helper to keep memoryCache bounded via LRU (Least Recently Used)
+function putMemoryCache(hash, item) {
+  if (memoryCache.has(hash)) {
+    memoryCache.delete(hash);
+  } else if (memoryCache.size >= MAX_MEMORY_CACHE_ITEMS) {
+    // Evict oldest (least recently used) item from RAM
+    const oldestKey = memoryCache.keys().next().value;
+    memoryCache.delete(oldestKey);
+  }
+  memoryCache.set(hash, item);
+}
+
+// Access memory cache and refresh its LRU position
+function getMemoryCache(hash) {
+  if (!memoryCache.has(hash)) return null;
+  const item = memoryCache.get(hash);
+  memoryCache.delete(hash);
+  memoryCache.set(hash, item); // move to most recent end
+  return item;
+}
 
 // Generate simple hash for caching
 function simpleHash(str) {
@@ -85,14 +109,15 @@ function simpleHash(str) {
 // Check single cache item
 async function getFromCache(text) {
   const hash = simpleHash(text);
-  if (memoryCache.has(hash)) {
-    return memoryCache.get(hash);
+  const memItem = getMemoryCache(hash);
+  if (memItem) {
+    return memItem;
   }
   try {
     const key = `echo_cache_${hash}`;
     const cached = await chrome.storage.local.get(key);
     if (cached && cached[key]) {
-      memoryCache.set(hash, cached[key]);
+      putMemoryCache(hash, cached[key]);
       return cached[key];
     }
   } catch (e) {}
@@ -107,8 +132,9 @@ async function getBatchCache(texts) {
 
   for (const text of texts) {
     const hash = simpleHash(text);
-    if (memoryCache.has(hash)) {
-      results[text] = memoryCache.get(hash).translation;
+    const memItem = getMemoryCache(hash);
+    if (memItem) {
+      results[text] = memItem.translation;
     } else {
       const key = `echo_cache_${hash}`;
       missingKeys.push(key);
@@ -122,7 +148,7 @@ async function getBatchCache(texts) {
       for (const [key, val] of Object.entries(stored)) {
         if (val && val.translation) {
           const hash = key.replace('echo_cache_', '');
-          memoryCache.set(hash, val);
+          putMemoryCache(hash, val);
           const origText = keyToText[key] || val.text;
           results[origText] = val.translation;
         }
@@ -141,7 +167,7 @@ async function saveToCache(text, translation) {
     translation: translation,
     timestamp: Date.now()
   };
-  memoryCache.set(hash, item);
+  putMemoryCache(hash, item);
   try {
     await chrome.storage.local.set({
       [`echo_cache_${hash}`]: item
