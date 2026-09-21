@@ -20,13 +20,15 @@ function isChinese(text) {
   return ratio > 0.25;
 }
 
-// Detect if text contains English content
-function isEnglish(text) {
-  if (!text || text.length === 0) return false;
-  const englishChars = text.match(/[a-zA-Z]/g);
-  if (!englishChars || englishChars.length < 3) return false;
-  const ratio = englishChars.length / text.length;
-  return ratio > 0.2;
+// Detect if text contains translatable foreign content (English, Japanese, Korean, Russian, European, etc.)
+function isTranslatable(text) {
+  if (!text || text.length < 2) return false;
+  // If already Chinese, skip
+  if (isChinese(text)) return false;
+  // Skip pure numbers, punctuation, dates, symbols
+  const clean = text.replace(/[\s\d\p{P}\p{S}]/gu, '');
+  if (clean.length < 2) return false;
+  return true;
 }
 
 // File extension regex for skipping filenames in repository viewers/lists
@@ -168,7 +170,7 @@ function collectFromNode(root, segments, segmentIdRef) {
     const text = (node.innerText || node.textContent || '').trim();
     if (text.length < 3) continue;
     if (isFileName(text)) continue;
-    if (isChinese(text) || !isEnglish(text)) continue;
+    if (!isTranslatable(text)) continue;
 
     segments.push({
       id: segmentIdRef.current++,
@@ -591,7 +593,7 @@ function isPageEnglish() {
 
   // Sample visible semantic nodes
   const samples = document.querySelectorAll('p, h1, h2, h3, article, [slot="title"], #readme');
-  let englishChars = 0;
+  let foreignChars = 0;
   let chineseChars = 0;
   let totalChars = 0;
 
@@ -601,8 +603,9 @@ function isPageEnglish() {
     const txt = (el.innerText || '').trim();
     if (txt.length < 5) continue;
     totalChars += txt.length;
-    const en = txt.match(/[a-zA-Z]/g);
-    if (en) englishChars += en.length;
+    // Latin, Cyrillic, Greek, Japanese Hiragana/Katakana, Korean Hangul, European accented
+    const foreign = txt.match(/[a-zA-Z\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF\u00C0-\u024F]/g);
+    if (foreign) foreignChars += foreign.length;
     const zh = txt.match(/[\u4e00-\u9fff]/g);
     if (zh) chineseChars += zh.length;
   }
@@ -610,22 +613,22 @@ function isPageEnglish() {
   // Fallback to title and body preview if samples are too small
   if (totalChars < 25) {
     const preview = (document.title + ' ' + (document.body ? document.body.innerText.slice(0, 500) : '')).trim();
-    const en = preview.match(/[a-zA-Z]/g);
+    const foreign = preview.match(/[a-zA-Z\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF\u00C0-\u024F]/g);
     const zh = preview.match(/[\u4e00-\u9fff]/g);
     totalChars = preview.length;
-    englishChars = en ? en.length : 0;
+    foreignChars = foreign ? foreign.length : 0;
     chineseChars = zh ? zh.length : 0;
   }
 
   if (totalChars === 0) return false;
-  const enRatio = englishChars / totalChars;
+  const foreignRatio = foreignChars / totalChars;
   const zhRatio = chineseChars / totalChars;
 
   // If Chinese ratio is > 15%, it's a Chinese site (Bilibili, Zhihu, etc.)
   if (zhRatio > 0.15) return false;
 
-  // If English ratio is > 35% or html lang is en and ratio > 20%
-  if (enRatio > 0.35 || (htmlLang.startsWith('en') && enRatio > 0.2)) {
+  // If foreign letters ratio is > 30% or html lang is not zh and ratio > 15%
+  if (foreignRatio > 0.30 || (!htmlLang.startsWith('zh') && foreignRatio > 0.15)) {
     return true;
   }
 
@@ -639,7 +642,7 @@ function isPageEnglish() {
     if (cfg && cfg.auto_translate_english !== false) {
       setTimeout(() => {
         if (!translationState.isTranslating && translationState.translatedSegments === 0) {
-          if (isPageEnglish()) {
+          if (isPageForeign()) {
             startTranslation();
           }
         }

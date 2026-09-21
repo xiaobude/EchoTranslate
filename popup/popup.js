@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const health = await chrome.runtime.sendMessage({ type: 'CHECK_HEALTH' });
     if (health && health.online) {
       statusIndicator.className = 'status-dot online';
-      statusIndicator.title = 'Local LLM 在线 (NeoHorse-1-4b)';
+      statusIndicator.title = `Local LLM 在线 (${health.model || 'Spark-X2.5-4b'})`;
     } else {
       statusIndicator.className = 'status-dot offline';
       statusIndicator.title = 'Local LLM 离线 (请确认 llama-server 8080)';

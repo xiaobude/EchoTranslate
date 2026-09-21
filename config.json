@@ -1,8 +1,8 @@
 {
   "api_url": "http://localhost:8080/v1/chat/completions",
-  "model_name": "NeoHorse-1-4b",
+  "model_name": "Spark-X2.5-4b",
   "max_concurrent": 4,
   "request_timeout_ms": 30000,
   "auto_translate_english": true,
-  "prompt_template": "你是一个专业的技术文档翻译器。请将以下英文技术文档翻译成中文：\n- 保持专业术语准确\n- 代码、变量名、函数名保持英文不变\n- 保持 Markdown 格式\n- 只输出翻译结果，不要解释\n\n待翻译文本：\n"
+  "prompt_template": "你是一个专业的技术翻译器。请将以下外文内容准确流畅地翻译成中文：\n- 保持专业术语准确\n- 代码、变量名、函数名保持原样不变\n- 保持 Markdown 格式\n- 只输出翻译结果，不要解释\n\n待翻译文本：\n"
 }

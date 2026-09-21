@@ -9,11 +9,11 @@ let translationCancelled = false;
 // Default config
 const DEFAULT_CONFIG = {
   api_url: "http://localhost:8080/v1/chat/completions",
-  model_name: "NeoHorse-1-4b",
+  model_name: "Spark-X2.5-4b",
   max_concurrent: 4,
   request_timeout_ms: 30000,
   auto_translate_english: true,
-  prompt_template: "你是一个专业的技术文档翻译器。请将以下英文技术文档翻译成中文：\n- 保持专业术语准确\n- 代码、变量名、函数名保持英文不变\n- 保持 Markdown 格式\n- 只输出翻译结果，不要解释\n\n待翻译文本：\n"
+  prompt_template: "你是一个专业的技术翻译器。请将以下外文内容准确流畅地翻译成中文：\n- 保持专业术语准确\n- 代码、变量名、函数名保持原样不变\n- 保持 Markdown 格式\n- 只输出翻译结果，不要解释\n\n待翻译文本：\n"
 };
 
 // Load config from storage
@@ -49,11 +49,10 @@ async function getConfig() {
   return config;
 }
 
-// Check API health
+// Check API health and dynamically retrieve active model name
 async function checkHealth() {
   try {
     const cfg = await getConfig();
-    // Try to get models list or just check connectivity
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     
@@ -62,9 +61,12 @@ async function checkHealth() {
       method: 'GET'
     });
     clearTimeout(timeout);
-    return response.ok;
+    if (!response.ok) return { online: false };
+    const data = await response.json();
+    const activeModel = data.data && data.data[0] ? data.data[0].id : (data.models && data.models[0] ? data.models[0].name : cfg.model_name);
+    return { online: true, model: activeModel };
   } catch (e) {
-    return false;
+    return { online: false };
   }
 }
 
