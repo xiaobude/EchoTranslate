@@ -13,7 +13,7 @@ const DEFAULT_CONFIG = {
   max_concurrent: 4,
   request_timeout_ms: 30000,
   auto_translate_english: true,
-  prompt_template: "你是一个专业的技术翻译器。请将以下外文内容准确流畅地翻译成中文：\n- 保持专业术语准确\n- 代码、变量名、函数名保持原样不变\n- 保持 Markdown 格式\n- 只输出翻译结果，不要解释\n\n待翻译文本：\n"
+  prompt_template: "你是一个专业的翻译器。请将以下外文内容准确流畅地翻译成中文。\n\n重要规则：\n1. 只输出翻译结果，绝对不要添加任何解释、注释、说明或备注\n2. 不要添加'注：'、'说明：'、'翻译说明'等任何额外文字\n3. 保持专业术语准确\n4. 代码、变量名、函数名、品牌名保持原样不变\n5. 保持 Markdown 格式\n6. 如果原文是宣传性标题，直接翻译，不要解释\n\n待翻译文本：\n"
 };
 
 // Load config from storage
@@ -169,7 +169,14 @@ function cleanTranslationResult(raw) {
     }
   }
 
-  // 6. Clean leading/trailing quotes if wrapped
+  // 6. Strip translator notes, explanation blocks, or trailing comments (e.g. "> 注：原文...", "（注：...）", "注：...")
+  str = str.replace(/(?:\s*>|\n>)\s*(?:\*{1,2})?(?:注|译注|译者注|备注|说明|提示)(?:\*{1,2})?[：:][\s\S]*$/i, '');
+  str = str.replace(/\n\s*(?:[\*\[（\(]\s*)?(?:注|译注|译者注|备注|说明)(?:\*{1,2})?[：:][\s\S]*$/i, '');
+  str = str.replace(/\s+(?:>|—|-|\/)\s*(?:\*{1,2})?(?:注|译注|译者注|备注|说明)[：:][\s\S]*$/i, '');
+  str = str.replace(/[\(（]\s*(?:注|译注|译者注|说明)[：:][^\)）]*[\)）]\s*$/i, '');
+  str = str.replace(/\s+(?:注|译注|译者注)[：:][\s\S]*$/i, '');
+
+  // 7. Clean leading/trailing quotes if wrapped
   if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith('“') && str.endsWith('”')) || (str.startsWith("'") && str.endsWith("'"))) {
     str = str.slice(1, -1).trim();
   }
@@ -297,7 +304,7 @@ async function translateSegment(text) {
       body: JSON.stringify({
         model: cfg.model_name || "spark-x2.5-4b",
         messages: [
-          { role: 'system', content: '你是专业翻译引擎。直接输出目标语言的翻译结果，严禁输出任何思考过程、分析、解释或前缀。' },
+          { role: 'system', content: '你是专业翻译引擎。直接输出目标语言的翻译结果，严禁输出任何思考过程、分析、解释、前缀，也严禁添加任何“注：”、“译注：”、“说明：”等译者备注。' },
           { role: 'user', content: cfg.prompt_template + text }
         ],
         temperature: 0.1,

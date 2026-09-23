@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const timeoutInput = document.getElementById('request_timeout_ms');
   const promptInput = document.getElementById('prompt_template');
   const autoTranslateCheckbox = document.getElementById('auto_translate_english');
+  const showOriginalHoverInput = document.getElementById('show_original_on_hover');
   const btnSave = document.getElementById('btn-save');
   const btnTest = document.getElementById('btn-test');
   const btnClearCache = document.getElementById('btn-clear-cache');
@@ -25,6 +26,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         promptInput.value = response.prompt_template || '';
         if (autoTranslateCheckbox) {
           autoTranslateCheckbox.checked = response.auto_translate_english !== false;
+        }
+        if (showOriginalHoverInput) {
+          showOriginalHoverInput.checked = response.show_original_on_hover === true;
         }
       }
     } catch (e) {
@@ -61,7 +65,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       max_concurrent: parseInt(maxConcurrentInput.value) || 4,
       request_timeout_ms: parseInt(timeoutInput.value) || 30000,
       prompt_template: promptInput.value,
-      auto_translate_english: autoTranslateCheckbox ? autoTranslateCheckbox.checked : true
+      auto_translate_english: autoTranslateCheckbox ? autoTranslateCheckbox.checked : true,
+      show_original_on_hover: showOriginalHoverInput ? showOriginalHoverInput.checked : false
     };
     
     try {

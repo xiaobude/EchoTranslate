@@ -48,18 +48,23 @@ function isFileName(text) {
 // Tags to strictly skip
 const skipTags = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'SVG', 'PRE', 'CODE',
-  'CANVAS', 'VIDEO', 'AUDIO', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT',
+  'CANVAS', 'VIDEO', 'AUDIO', 'INPUT', 'TEXTAREA', 'SELECT',
   'KBD', 'SAMP'
 ]);
 
 // Semantic content tags
 const targetTags = new Set([
-  'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'TH', 'TD', 'DD', 'DT', 'FIGCAPTION'
+  'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'TH', 'TD', 'DD', 'DT', 'FIGCAPTION',
+  'STRONG', 'B', 'SUMMARY', 'CAPTION'
 ]);
 
 // Determine if an element represents translatable text
 function isTargetElement(node) {
   if (targetTags.has(node.tagName)) {
+    // If STRONG or B is inside another semantic text element, let parent handle it
+    if ((node.tagName === 'STRONG' || node.tagName === 'B') && node.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, th, td')) {
+      return false;
+    }
     // If LI is a complex layout container (contains div, table, form, grid, flex row), do NOT treat the whole LI as a text segment!
     if (node.tagName === 'LI') {
       if (node.querySelector && node.querySelector('div, table, form, ul, ol, section, p, h1, h2, h3, h4, h5, h6')) {
@@ -80,15 +85,40 @@ function isTargetElement(node) {
     }
     return true;
   }
-  // Support Reddit custom slots and common blog/forum titles
-  if (node.hasAttribute && node.hasAttribute('slot')) {
-    const slot = node.getAttribute('slot');
-    if (slot === 'title' || slot === 'text-body' || slot === 'comment') return true;
-  }
-  // Standalone headline links or titles
-  if (node.tagName === 'A' && (node.classList.contains('title') || node.getAttribute('data-click-id') === 'body')) {
+
+  // Navigation links, category items, and action buttons (e.g. Newegg menus, shopping categories)
+  if (node.tagName === 'A' || node.tagName === 'BUTTON') {
+    // If inside a text block, let the parent block translate cohesively with links preserved
+    if (node.closest('p, blockquote, dd, dt')) {
+      return false;
+    }
+    // If it wraps complex layout containers, let the child elements be collected individually
+    if (node.querySelector && node.querySelector('p, h1, h2, h3, h4, h5, h6, li, table, form, ul, ol')) {
+      return false;
+    }
     return true;
   }
+
+  // Support Reddit custom slots and common menu/tab roles
+  if (node.hasAttribute && (
+    node.getAttribute('slot') === 'title' ||
+    node.getAttribute('slot') === 'text-body' ||
+    node.getAttribute('slot') === 'comment' ||
+    node.getAttribute('role') === 'menuitem' ||
+    node.getAttribute('role') === 'tab'
+  )) {
+    return true;
+  }
+
+  // Menu column headers and category titles (e.g. Newegg "Desktop", "Peripherals" spans/divs)
+  if (node.tagName === 'SPAN' || node.tagName === 'DIV') {
+    if (node.className && typeof node.className === 'string' && /(?:menu|nav|category|filter|header.*nav).*title/i.test(node.className)) {
+      if (!node.querySelector('p, h1, h2, h3, h4, h5, h6, li, div, table')) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -154,11 +184,6 @@ function collectFromNode(root, segments, segmentIdRef) {
     // Skip if already translated
     if (node.dataset && node.dataset.echoTranslated) continue;
     if (node.classList && node.classList.contains('echo-translated-item')) continue;
-
-    // Skip navigation and site chrome
-    if (node.closest && node.closest('nav, header, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"]')) {
-      continue;
-    }
 
     // Skip file download links and resolvers
     if (node.closest && node.closest('a[download], a[href*="/resolve/"], a[href*="/raw/"]')) {
@@ -251,6 +276,95 @@ function updateProgress() {
   }
 }
 
+// Helper to escape HTML characters
+function escapeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Update an element's text while preserving any child icons (<svg>, <img>, icon classes)
+function updateElementContentPreservingIcons(el, newText) {
+  const icons = Array.from(el.querySelectorAll('svg, img, i, [class*="octicon"], [class*="icon"], [class*="ico"], [class*="fa"]'));
+  
+  if (icons.length > 0) {
+    const iconClones = icons.map(icon => icon.cloneNode(true));
+    el.innerHTML = '';
+    iconClones.forEach(icon => {
+      el.appendChild(icon);
+      el.appendChild(document.createTextNode(' '));
+    });
+    el.appendChild(document.createTextNode(newText));
+  } else {
+    el.textContent = newText;
+  }
+}
+
+// Safely apply translation to an element without destroying links or icons
+function applyTranslationToElement(node, translation) {
+  if (!node) return;
+
+  // 1. If the node itself is an anchor link <a>
+  if (node.tagName === 'A') {
+    updateElementContentPreservingIcons(node, translation);
+    return;
+  }
+
+  // 2. If the node wraps a single anchor link <a> (e.g. GitHub Trending <h2><a href="...">...</a></h2>)
+  const links = node.querySelectorAll('a');
+  if (links.length === 1) {
+    const link = links[0];
+    const linkText = (link.textContent || '').trim();
+    const nodeText = (node.textContent || '').trim();
+    // If the link contains the bulk of the text
+    if (linkText.length > 0 && (linkText === nodeText || linkText.length >= nodeText.length * 0.6)) {
+      updateElementContentPreservingIcons(link, translation);
+      return;
+    }
+  }
+
+  // 3. If node contains multiple links or inline links
+  if (links.length > 0) {
+    const linkMap = [];
+    links.forEach(a => {
+      const text = (a.textContent || '').trim();
+      if (text.length > 0) {
+        linkMap.push({
+          text: text,
+          html: a.outerHTML
+        });
+      }
+    });
+
+    let htmlWithLinks = escapeHtml(translation);
+    let matchedAny = false;
+    for (const item of linkMap) {
+      if (htmlWithLinks.includes(item.text)) {
+        htmlWithLinks = htmlWithLinks.replace(item.text, item.html);
+        matchedAny = true;
+      }
+    }
+    
+    if (matchedAny) {
+      node.innerHTML = htmlWithLinks;
+      return;
+    }
+  }
+
+  // 4. If node has child elements with icons (e.g. leading svg icon)
+  if (node.children.length > 0) {
+    updateElementContentPreservingIcons(node, translation);
+    return;
+  }
+
+  // 5. Default fallback
+  node.textContent = translation;
+}
+
 // Switch display mode
 function switchMode(mode) {
   translationState.mode = mode;
@@ -260,7 +374,10 @@ function switchMode(mode) {
     document.querySelectorAll('.echo-translated-item').forEach(el => el.remove());
     for (const seg of translationState.segments) {
       if (seg.translation && seg.element) {
-        seg.element.textContent = seg.translation;
+        if (seg.element.dataset.echoOriginal) {
+          seg.element.innerHTML = seg.element.dataset.echoOriginal;
+        }
+        applyTranslationToElement(seg.element, seg.translation);
         seg.element.style.display = '';
       }
     }
@@ -317,11 +434,16 @@ function insertTranslation(segment, translation) {
   
   node.dataset.echoTranslated = 'true';
   node.dataset.echoOriginal = node.innerHTML;
-  node.title = '原文: ' + segment.text;
+  node.dataset.echoOriginalText = segment.text;
+  
+  // Only show original text on hover if enabled in settings
+  if (translationState.showOriginalOnHover) {
+    node.title = '原文: ' + segment.text;
+  }
 
   if (translationState.mode === 'translated') {
     // 仅译文模式 (像谷歌翻译一样就地替换，保留所有 slot="title"、类名、链接与排版位置)
-    node.textContent = translation;
+    applyTranslationToElement(node, translation);
     node.classList.add('echo-translated-text');
   } else {
     // 双语对照模式：在下方插入独立行
@@ -523,6 +645,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       switchMode(message.mode);
       sendResponse({ success: true });
       break;
+    case 'SET_SHOW_ORIGINAL_ON_HOVER':
+      translationState.showOriginalOnHover = message.enabled;
+      // Update all translated elements
+      document.querySelectorAll('[data-echo-translated="true"]').forEach(node => {
+        if (message.enabled && node.dataset.echoOriginalText) {
+          node.title = '原文: ' + node.dataset.echoOriginalText;
+        } else {
+          node.removeAttribute('title');
+        }
+      });
+      sendResponse({ success: true });
+      break;
     default:
       sendResponse({ status: 'unknown' });
   }
@@ -578,16 +712,25 @@ history.replaceState = function(...args) {
 window.addEventListener('popstate', onUrlChange);
 setInterval(onUrlChange, 800);
 
-// Dynamic Content / Infinite Scroll Observer (Debounced)
+// Dynamic Content / Infinite Scroll / Dropdown Menu Observer (Debounced)
 let mutationTimer = null;
 const dynamicObserver = new MutationObserver((mutations) => {
   if (!translationState.autoTranslate) return;
 
   let hasRelevantNodes = false;
   for (const m of mutations) {
-    if (m.addedNodes && m.addedNodes.length > 0) {
+    if (m.type === 'childList' && m.addedNodes && m.addedNodes.length > 0) {
       for (const n of m.addedNodes) {
         if (n.nodeType === Node.ELEMENT_NODE && !n.classList?.contains('echo-translated-item')) {
+          hasRelevantNodes = true;
+          break;
+        }
+      }
+    } else if (m.type === 'attributes') {
+      const el = m.target;
+      if (el && el.nodeType === Node.ELEMENT_NODE) {
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (/(?:menu|dropdown|nav|popup|flyout|expand|active|open|show)/i.test(cls) || el.getAttribute?.('aria-expanded') === 'true') {
           hasRelevantNodes = true;
           break;
         }
@@ -598,7 +741,7 @@ const dynamicObserver = new MutationObserver((mutations) => {
 
   if (hasRelevantNodes) {
     if (translationState.isTranslating) {
-      // Mark pending so newly arrived comment nodes will be translated as soon as current batch finishes
+      // Mark pending so newly arrived comment or menu nodes will be translated as soon as current batch finishes
       pendingDynamicTranslate = true;
     } else {
       clearTimeout(mutationTimer);
@@ -606,12 +749,17 @@ const dynamicObserver = new MutationObserver((mutations) => {
         if (translationState.autoTranslate && !translationState.isTranslating) {
           startTranslation(true);
         }
-      }, 700);
+      }, 500);
     }
   }
 });
 
-dynamicObserver.observe(document.body, { childList: true, subtree: true });
+dynamicObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['class', 'aria-expanded']
+});
 
 // Listen for user scroll (infinite scroll for Reddit/Twitter comments)
 let scrollTimer = null;
@@ -676,10 +824,14 @@ function isPageForeign() {
   return false;
 }
 
-// Auto-translate on page load if enabled in settings
+// Load settings and auto-translate on page load if enabled
 (async () => {
   try {
     const cfg = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
+    if (cfg) {
+      // Load show_original_on_hover setting
+      translationState.showOriginalOnHover = cfg.show_original_on_hover === true;
+    }
     if (cfg && cfg.auto_translate_english !== false) {
       setTimeout(() => {
         if (!translationState.isTranslating && translationState.translatedSegments === 0) {

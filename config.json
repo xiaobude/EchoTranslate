@@ -4,6 +4,7 @@
   "max_concurrent": 4,
   "request_timeout_ms": 30000,
   "auto_translate_english": true,
-  "prompt_template": "你是一个专业的技术翻译器。请将以下外文内容准确流畅地翻译成中文：\n- 保持专业术语准确\n- 代码、变量名、函数名保持原样不变\n- 保持 Markdown 格式\n- 只输出翻译结果，不要解释\n\n待翻译文本：\n"
+  "show_original_on_hover": false,
+  "prompt_template": "你是一个专业的翻译器。请将以下外文内容准确流畅地翻译成中文。\n\n重要规则：\n1. 只输出翻译结果，绝对不要添加任何解释、注释、说明或备注\n2. 不要添加'注：'、'说明：'、'翻译说明'等任何额外文字\n3. 保持专业术语准确\n4. 代码、变量名、函数名、品牌名保持原样不变\n5. 保持 Markdown 格式\n6. 如果原文是宣传性标题，直接翻译，不要解释\n\n待翻译文本：\n"
 }
 
